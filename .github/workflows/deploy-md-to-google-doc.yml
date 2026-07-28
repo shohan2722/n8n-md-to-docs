@@ -1,0 +1,89 @@
+name: Deploy mdToGoogleDoc
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "src/**"
+      - "package.json"
+      - "bun.lock"
+      - "firebase.json"
+      - ".github/workflows/deploy-md-to-google-doc.yml"
+
+concurrency:
+  group: deploy-md-to-google-doc-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy Firebase function
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    env:
+      FIREBASE_PROJECT_ID: md-to-gdoc-shohan
+      FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+      FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_MD_TO_GDOC_SHOHAN || secrets.FIREBASE_SERVICE_ACCOUNT || secrets.GCP_SA_KEY || secrets.GOOGLE_CREDENTIALS }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build function
+        run: bun run build
+
+      - name: Install Firebase CLI
+        run: npm install --global firebase-tools
+
+      - name: Configure Google credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${FIREBASE_SERVICE_ACCOUNT_JSON}" ]]; then
+            credentials_file="${RUNNER_TEMP}/firebase-service-account.json"
+            printf '%s' "${FIREBASE_SERVICE_ACCOUNT_JSON}" > "${credentials_file}"
+            chmod 600 "${credentials_file}"
+            echo "GOOGLE_APPLICATION_CREDENTIALS=${credentials_file}" >> "${GITHUB_ENV}"
+            echo "AUTH_METHOD=service-account" >> "${GITHUB_ENV}"
+          elif [[ -n "${FIREBASE_TOKEN}" ]]; then
+            echo "AUTH_METHOD=firebase-token" >> "${GITHUB_ENV}"
+          else
+            echo "No Firebase deployment credential was found in this repository." >&2
+            echo "Add one of these GitHub Actions secrets:" >&2
+            echo "  FIREBASE_SERVICE_ACCOUNT_MD_TO_GDOC_SHOHAN" >&2
+            echo "  FIREBASE_SERVICE_ACCOUNT" >&2
+            echo "  GCP_SA_KEY" >&2
+            echo "  GOOGLE_CREDENTIALS" >&2
+            echo "  FIREBASE_TOKEN" >&2
+            exit 2
+          fi
+
+      - name: Deploy mdToGoogleDoc
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${AUTH_METHOD}" == "firebase-token" ]]; then
+            firebase deploy \
+              --only functions:mdToGoogleDoc \
+              --project "${FIREBASE_PROJECT_ID}" \
+              --token "${FIREBASE_TOKEN}" \
+              --force \
+              --non-interactive
+          else
+            firebase deploy \
+              --only functions:mdToGoogleDoc \
+              --project "${FIREBASE_PROJECT_ID}" \
+              --force \
+              --non-interactive
+          fi
