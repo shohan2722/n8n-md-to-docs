@@ -1,0 +1,58 @@
+name: Test hosted endpoint
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/test-hosted-endpoint.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  test-endpoint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Probe endpoint
+        shell: bash
+        run: |
+          set -uo pipefail
+          url="https://md2doc.n8n.aemalsayer.com"
+          result="endpoint-test-result.txt"
+          : > "$result"
+          {
+            echo "Tested at: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+            echo "Endpoint: $url"
+            echo
+            for method in GET HEAD OPTIONS; do
+              echo "===== $method ====="
+              curl -sS --max-time 30 -X "$method" -D - -o /tmp/body "$url" || true
+              echo "--- BODY ---"
+              head -c 2000 /tmp/body 2>/dev/null || true
+              echo
+              echo
+            done
+            echo "===== POST missing output ====="
+            curl -sS --max-time 30 -X POST -D - -o /tmp/post-body \
+              -H 'Content-Type: application/json' \
+              --data '{"fileName":"Endpoint Test"}' \
+              "$url" || true
+            echo "--- BODY ---"
+            head -c 2000 /tmp/post-body 2>/dev/null || true
+            echo
+          } >> "$result" 2>&1
+
+      - name: Commit test result
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add endpoint-test-result.txt
+          git commit -m "Record hosted endpoint test result" || exit 0
+          git push
